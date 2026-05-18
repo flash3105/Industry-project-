@@ -1,0 +1,966 @@
+---
+title: "Capstone rough"
+output: html_document
+date: "2026-05-10"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+## import dataset
+```{r}
+library(readxl)
+library(dplyr)
+library(mice)
+library(stringr)
+library(ggplot2)
+
+
+business_risk_unlabeled_capstone_data_final <- read_excel("business_risk_unlabeled_capstone_data_final.xlsx")
+data_final <- business_risk_unlabeled_capstone_data_final[-1,]
+
+# temp_missing<-data_final[!complete.cases(data_final), ]
+
+```
+
+## Basic data cleaning
+```{r}
+data_final_all_imp <-subset(data_final, select = -c(client_id, client_reference_hash))
+
+data_final_all_imp$region <- str_to_title(data_final_all_imp$region)
+data_final_all_imp$region[data_final_all_imp$region=="gauteng"] <- "Gauteng"
+data_final_all_imp$region[data_final_all_imp$region=="Free-State"] <- "Free State"
+data_final_all_imp$region[data_final_all_imp$region=="Mpum."] <- "Mpumalanga"
+data_final_all_imp$region[data_final_all_imp$region=="Kzn"] <- "Kwazulu-Natal"
+
+data_final_all_imp$sector[is.na(data_final_all_imp$sector)] <- "Other/Missing"
+
+data_final_all_imp$employee_band <- str_to_title(data_final_all_imp$employee_band)
+data_final_all_imp$employee_band[data_final_all_imp$employee_band=="Med"] <- "Medium"
+
+
+data_final_all_imp$acquisition_channel[is.na(data_final_all_imp$acquisition_channel)] <- "Other/Missing"
+n_distinct(data_final_all_imp$region)
+n_distinct(data_final_all_imp$sector)
+n_distinct(data_final_all_imp$employee_band)
+n_distinct(data_final_all_imp$acquisition_channel)
+```
+
+######Testing if categorical has pattern with missingness #####
+
+# creates indicator variables for the categorical variables. 
+# so then the 1 and 0 becomes the Y variables/output that we use to see if the categorical variables
+# predict the missingness.
+# so 1 if there is missingness in the row of the categorical variable 0 if not
+# does this for all missing values and all categorical variables
+# see if MAR or maybe MCAR with categorical variables
+
+# CTS done in SAS so need to get that into R still
+
+###### Agree on this so dont need to change ###### 
+
+```{r}
+
+
+data_test <- data_final_all_imp %>%
+  mutate(
+    miss_1 = as.numeric(is.na(quick_ratio)),
+    miss_2 = as.numeric(is.na(ebit_margin)),
+    miss_3 = as.numeric(is.na(employee_growth)),
+    miss_4 = as.numeric(is.na(web_traffic_growth))
+  )
+
+
+model_miss_1 <- glm(miss_1 ~ sector + region + primary_product + acquisition_channel+ employee_band + marketing_segment_code, 
+                data = data_test, 
+                family = binomial)
+
+summary(model_miss_1)
+# Lyk my market_segment --> codeD03 is related to if quick_ratio is missing
+
+model_miss_2 <- glm(miss_2 ~ sector + region + primary_product + acquisition_channel+ employee_band + marketing_segment_code, 
+                    data = data_test, 
+                    family = binomial)
+
+summary(model_miss_2)
+# Lyk my market_segment --> codeC91 is related to if ebit_margin is missing
+
+
+model_miss_3 <- glm(miss_3 ~ sector + region + primary_product + acquisition_channel+ employee_band + marketing_segment_code, 
+                    data = data_test, 
+                    family = binomial)
+
+summary(model_miss_3)
+# lyk ook soos MCAR 
+
+model_miss_4 <- glm(miss_4 ~ sector + region + primary_product + acquisition_channel+ employee_band + marketing_segment_code, 
+                    data = data_test, 
+                    family = binomial)
+
+summary(model_miss_4)
+# lyk my region --> western cape is related to if web_traffic_growth is missing 
+
+
+
+
+# factorise vir die MI
+data_final_all_imp$sector <- as.factor(data_final_all_imp$sector)
+data_final_all_imp$region <- as.factor(data_final_all_imp$region)
+data_final_all_imp$primary_product <- as.factor(data_final_all_imp$primary_product)
+data_final_all_imp$acquisition_channel <- as.factor(data_final_all_imp$acquisition_channel)
+data_final_all_imp$employee_band <- as.factor(data_final_all_imp$employee_band)
+data_final_all_imp$marketing_segment_code <- as.factor(data_final_all_imp$marketing_segment_code)
+```
+
+## Using Multiple imputation to fill in the missing values
+# creates/generates possible values for each missing value based on the data
+# does this m=25 times
+# this is a must and we will have to use all m datasets to improve stability and accuracy 
+
+```{r}
+imp_all <- mice(data_final_all_imp, m=25, method="pmm", seed=42)
+imp_all$loggedEvents
+imp_all_data <- imp_all$data
+densityplot(imp_all)
+all_MI_data_final <- complete(imp_all, "long")
+```
+
+
+##Unsupervised feature selection using FAMD
+# Doing FAMD on the entire dataset. 
+# Dont split datasets into smaller subgroups 
+# My thinking is splitting into subgroups will then ignore/destroy possible 
+# interactions/correlations between variables that are in different groups
+
+# FAMD works for both categorical and cts variables
+# doing it on entire dataset ensures no interactions/correlations between variables are missed
+# FAMD package internally handles this
+# Must do on all m datasets 
+```{r}
+library(FactoMineR)
+library(factoextra)
+
+# only a few of the datasets. Should run everything for final answers 
+X_1<- complete(imp_all, action=1)
+X_2<-complete(imp_all, action=2)
+X_5<-complete(imp_all, action=5)
+X_10<-complete(imp_all, action=10)
+X_20<-complete(imp_all, action=20)
+X_25<-complete(imp_all, action=25)
+
+X_3<- complete(imp_all, action=3)
+X_4<-complete(imp_all, action=4)
+X_6<-complete(imp_all, action=6)
+X_7<-complete(imp_all, action=7)
+X_8<-complete(imp_all, action=8)
+X_9<-complete(imp_all, action=9)
+
+X_11<- complete(imp_all, action=11)
+X_12<-complete(imp_all, action=12)
+X_13<-complete(imp_all, action=13)
+X_14<-complete(imp_all, action=14)
+X_15<-complete(imp_all, action=15)
+X_16<-complete(imp_all, action=16)
+
+X_17<- complete(imp_all, action=17)
+X_18<-complete(imp_all, action=18)
+X_19<-complete(imp_all, action=19)
+X_21<-complete(imp_all, action=21)
+X_22<-complete(imp_all, action=22)
+X_23<-complete(imp_all, action=23)
+
+X_24<- complete(imp_all, action=24)
+
+# Run FAMD
+res_famd <- FAMD(X_1, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_2 <- FAMD(X_2, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_5 <- FAMD(X_5, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_10 <- FAMD(X_10, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_20 <- FAMD(X_20, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_25 <- FAMD(X_25, 
+                 ncp = 35,      
+                 graph = FALSE)
+
+res_famd_3 <- FAMD(X_3, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_4 <- FAMD(X_4, 
+                   ncp = 35,      
+                   graph = FALSE)
+res_famd_6 <- FAMD(X_6, 
+                   ncp = 35,      
+                   graph = FALSE)
+res_famd_7 <- FAMD(X_7, 
+                    ncp = 35,      
+                    graph = FALSE)
+res_famd_8 <- FAMD(X_8, 
+                    ncp = 35,      
+                    graph = FALSE)
+res_famd_9 <- FAMD(X_9, 
+                    ncp = 35,      
+                    graph = FALSE)
+
+res_famd_11 <- FAMD(X_11, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_12 <- FAMD(X_12, 
+                   ncp = 35,      
+                   graph = FALSE)
+res_famd_13 <- FAMD(X_13, 
+                   ncp = 35,      
+                   graph = FALSE)
+res_famd_14 <- FAMD(X_14, 
+                    ncp = 35,      
+                    graph = FALSE)
+res_famd_15 <- FAMD(X_15, 
+                    ncp = 35,      
+                    graph = FALSE)
+res_famd_16 <- FAMD(X_16, 
+                    ncp = 35,      
+                    graph = FALSE)
+
+res_famd_17 <- FAMD(X_17, 
+                 ncp = 35,      
+                 graph = FALSE)
+res_famd_18 <- FAMD(X_18, 
+                   ncp = 35,      
+                   graph = FALSE)
+res_famd_19 <- FAMD(X_19, 
+                   ncp = 35,      
+                   graph = FALSE)
+res_famd_21 <- FAMD(X_21, 
+                    ncp = 35,      
+                    graph = FALSE)
+res_famd_22 <- FAMD(X_22, 
+                    ncp = 35,      
+                    graph = FALSE)
+res_famd_23 <- FAMD(X_23, 
+                    ncp = 35,      
+                    graph = FALSE)
+
+res_famd_24 <- FAMD(X_24, 
+                 ncp = 35,      
+                 graph = FALSE)
+
+
+# Summary: eigenvalues / variance explained
+# summary(res_famd)
+# indv <- (res_famd$ind)
+# cats <- (res_famd$var)
+
+# eig <- get_eigenvalue(res_famd)
+# fviz_screeplot(res_famd, addlabels = TRUE) + 
+#   geom_vline(xintercept = 5, linetype = 2)  # decide how many dims to keep
+
+
+# eig_vals <- res_famd$eig
+# # Variable contributions
+# var_contrib <- res_famd$var$contrib
+# head(var_contrib, 20)  # overall or per dimension
+# 
+# # Plot contributions to Dim 1,3,4,5
+# fviz_contrib(res_famd, choice = "var", axes = 1, top = 30)
+# fviz_contrib(res_famd, choice = "var", axes = 2, top = 30)
+# fviz_contrib(res_famd, choice = "var", axes = 3, top = 30)
+# fviz_contrib(res_famd, choice = "var", axes = 4, top = 30)
+# fviz_contrib(res_famd, choice = "var", axes = 5, top = 30)
+# 
+# fviz_contrib(res_famd, choice = "var", axes = 1:2, top = 30)  # combined
+# 
+# # Variable plot (correlation circle style for mixed)
+# fviz_famd_var(res_famd, repel = TRUE, col.var = "contrib")  # color by contribution
+# fviz_famd_var(res_famd, axes = c(1,2), repel = TRUE)
+
+
+# 1. Calculate the total contribution across the dimensions you decided to keep
+# Based on skree we use the first 5 dimensions (elbow)
+dims_to_keep <- 1:5
+total_contribs <- rowSums(res_famd$var$contrib[, dims_to_keep])
+total_contribs_2 <- rowSums(res_famd_2$var$contrib[, dims_to_keep])
+total_contribs_5 <- rowSums(res_famd_5$var$contrib[, dims_to_keep])
+total_contribs_10 <- rowSums(res_famd_10$var$contrib[, dims_to_keep])
+total_contribs_20 <- rowSums(res_famd_20$var$contrib[, dims_to_keep])
+total_contribs_25 <- rowSums(res_famd_25$var$contrib[, dims_to_keep])
+
+total_contribs_3 <- rowSums(res_famd_3$var$contrib[, dims_to_keep])
+total_contribs_4 <- rowSums(res_famd_4$var$contrib[, dims_to_keep])
+total_contribs_6 <- rowSums(res_famd_6$var$contrib[, dims_to_keep])
+total_contribs_7 <- rowSums(res_famd_7$var$contrib[, dims_to_keep])
+total_contribs_8 <- rowSums(res_famd_8$var$contrib[, dims_to_keep])
+total_contribs_9 <- rowSums(res_famd_9$var$contrib[, dims_to_keep])
+
+total_contribs_11 <- rowSums(res_famd_11$var$contrib[, dims_to_keep])
+total_contribs_12 <- rowSums(res_famd_12$var$contrib[, dims_to_keep])
+total_contribs_13 <- rowSums(res_famd_13$var$contrib[, dims_to_keep])
+total_contribs_14 <- rowSums(res_famd_14$var$contrib[, dims_to_keep])
+total_contribs_15 <- rowSums(res_famd_15$var$contrib[, dims_to_keep])
+total_contribs_16 <- rowSums(res_famd_16$var$contrib[, dims_to_keep])
+
+total_contribs_17 <- rowSums(res_famd_17$var$contrib[, dims_to_keep])
+total_contribs_18 <- rowSums(res_famd_18$var$contrib[, dims_to_keep])
+total_contribs_19 <- rowSums(res_famd_19$var$contrib[, dims_to_keep])
+total_contribs_21 <- rowSums(res_famd_21$var$contrib[, dims_to_keep])
+total_contribs_22 <- rowSums(res_famd_22$var$contrib[, dims_to_keep])
+total_contribs_23 <- rowSums(res_famd_23$var$contrib[, dims_to_keep])
+
+total_contribs_24 <- rowSums(res_famd_24$var$contrib[, dims_to_keep])
+
+
+#### deciding varaibles to keep (my approach) #####
+# Average contribution = 100 / total number of variables
+# keep al variables that contribute atleast 20% of the average contribution
+threshold <- 100 / ncol(X_1) *0.2  # keep al variables that contribute atleast 20% of the average contribution
+# threshold <- 100 / ncol(X_1) *0.5
+threshold_5 <- 100 / ncol(X_5) *0.2
+threshold_10 <- 100 / ncol(X_10) *0.2
+threshold_20 <- 100 / ncol(X_20) *0.2
+threshold_25 <- 100 / ncol(X_25) *0.2
+
+threshold_2 <- 100 / ncol(X_2) *0.2
+threshold_3 <- 100 / ncol(X_5) *0.2
+threshold_4 <- 100 / ncol(X_10) *0.2
+threshold_6 <- 100 / ncol(X_20) *0.2
+threshold_7 <- 100 / ncol(X_25) *0.2
+
+threshold_8 <- 100 / ncol(X_5) *0.2
+threshold_9 <- 100 / ncol(X_10) *0.2
+threshold_11 <- 100 / ncol(X_20) *0.2
+threshold_12 <- 100 / ncol(X_25) *0.2
+
+threshold_13 <- 100 / ncol(X_5) *0.2
+threshold_14 <- 100 / ncol(X_10) *0.2
+threshold_15 <- 100 / ncol(X_20) *0.2
+threshold_16 <- 100 / ncol(X_25) *0.2
+
+threshold_17 <- 100 / ncol(X_5) *0.2
+threshold_18 <- 100 / ncol(X_10) *0.2
+threshold_19 <- 100 / ncol(X_20) *0.2
+threshold_21 <- 100 / ncol(X_25) *0.2
+
+threshold_22 <- 100 / ncol(X_5) *0.2
+threshold_23 <- 100 / ncol(X_10) *0.2
+threshold_24 <- 100 / ncol(X_20) *0.2
+
+# so lots of var provides some contribution towards the variance
+# 3. Identify the "Strong" variables
+selected_vars <- names(total_contribs[total_contribs > threshold])
+selected_vars_2 <- names(total_contribs_2[total_contribs_2 > threshold_2])
+selected_vars_5 <- names(total_contribs_5[total_contribs_5 > threshold_5])
+selected_vars_10 <- names(total_contribs_10[total_contribs_10 > threshold_10])
+selected_vars_20 <- names(total_contribs_20[total_contribs_20 > threshold_20])
+selected_vars_25 <- names(total_contribs_25[total_contribs_25 > threshold_25])
+
+selected_vars_3 <- names(total_contribs_3[total_contribs_3 > threshold_3])
+selected_vars_4 <- names(total_contribs_4[total_contribs_4 > threshold_4])
+selected_vars_6 <- names(total_contribs_6[total_contribs_6 > threshold_6])
+selected_vars_7 <- names(total_contribs_7[total_contribs_7 > threshold_7])
+selected_vars_8 <- names(total_contribs_8[total_contribs_8 > threshold_8])
+selected_vars_9 <- names(total_contribs_9[total_contribs_9 > threshold_9])
+
+selected_vars_11 <- names(total_contribs_11[total_contribs_11 > threshold_11])
+selected_vars_12 <- names(total_contribs_12[total_contribs_12 > threshold_12])
+selected_vars_13 <- names(total_contribs_13[total_contribs_13 > threshold_13])
+selected_vars_14 <- names(total_contribs_14[total_contribs_14 > threshold_14])
+selected_vars_15 <- names(total_contribs_15[total_contribs_15 > threshold_15])
+selected_vars_16 <- names(total_contribs_16[total_contribs_16 > threshold_16])
+
+selected_vars_17 <- names(total_contribs_17[total_contribs_17 > threshold_17])
+selected_vars_18 <- names(total_contribs_18[total_contribs_18 > threshold_18])
+selected_vars_19 <- names(total_contribs_19[total_contribs_19 > threshold_19])
+selected_vars_21 <- names(total_contribs_21[total_contribs_21 > threshold_21])
+selected_vars_22 <- names(total_contribs_22[total_contribs_22 > threshold_22])
+selected_vars_23 <- names(total_contribs_23[total_contribs_23 > threshold_23])
+
+selected_vars_24 <- names(total_contribs_24[total_contribs_24 > threshold_24])
+
+
+# 4. Create your new, reduced dataset
+# removes non-informative results. 
+X_1_reduced <- X_1[, selected_vars]
+X_2_reduced <- X_2[, selected_vars_2]
+X_5_reduced <- X_5[, selected_vars_5]
+X_10_reduced <- X_10[, selected_vars_10]
+X_20_reduced <- X_20[, selected_vars_20]
+X_25_reduced <- X_25[, selected_vars_25]
+
+X_3_reduced <- X_3[, selected_vars_3]
+X_4_reduced <- X_4[, selected_vars_4]
+X_6_reduced <- X_6[, selected_vars_6]
+X_7_reduced <- X_7[, selected_vars_7]
+X_8_reduced <- X_8[, selected_vars_8]
+X_9_reduced <- X_9[, selected_vars_9]
+
+X_11_reduced <- X_11[, selected_vars_11]
+X_12_reduced <- X_12[, selected_vars_12]
+X_13_reduced <- X_13[, selected_vars_13]
+X_14_reduced <- X_14[, selected_vars_14]
+X_15_reduced <- X_15[, selected_vars_15]
+X_16_reduced <- X_16[, selected_vars_16]
+
+X_17_reduced <- X_17[, selected_vars_17]
+X_18_reduced <- X_18[, selected_vars_18]
+X_19_reduced <- X_19[, selected_vars_19]
+X_21_reduced <- X_21[, selected_vars_21]
+X_22_reduced <- X_22[, selected_vars_22]
+X_23_reduced <- X_23[, selected_vars_23]
+
+X_24_reduced <- X_24[, selected_vars_24]
+
+```
+
+## LCA with Mclsut 1: 
+#             We use mclust()
+#             we run this with possible 2-->6 clusters to be chosen from (1 cluster is                meaningless)
+#             we run this with 6 possible models
+#             this uses BIC to determine the best model 
+#             and best number of clusters
+#             internally it runs all combinations of clusters and models
+#             defualt is 250 iterations max
+
+
+# The results showed using majority vote that VVE + 4 clusters gives us the best BIC
+# This is then the model and number of clusters we chose
+# (explenations of model meanings inside this chunk)
+# (takes +- 20 minutes per cluster so run 1 at a time if you only want to quickly look    at results)
+# (dont need to run this. this is only to show where i get the info from)
+```{r}
+library(mclust)
+
+
+# Determines the size and shape of the models
+# For now assume not realistic to assume same size 
+# last letter = V = more complex since oriantation of clusters is different for each cluster
+
+# EII=equal size + equal shape + (very low complexity + spherical)
+# VII=variable szie + equal shape + (low complexity + spherical)
+# EEI=equal size + equal shape + (low complexity + diagonal)
+
+# VEI=variable szie + equal shape + (medium complex + diagonal)
+# EVI=equal size + variable shape + (medium complex + diagonal)
+# VVI=variable szie + variable shape + (medium complex + diagonal)
+
+# EEE=equal size + equal shape + (high complexity + ellipsoidal)
+# EVE=equal size + variable shape + (high complexity + ellipsoidal)
+# VEE=variable szie + equal shape + (high complexity + ellipsoidal) 
+
+# VVE=variable szie + variable shape +(very high complexity + ellipsoidal) 
+# EEV=equal size + equal shape + (very high complexity + ellipsoidal)
+# VEV=equal size + equal shape + (very high complexity + ellipsoidal)
+
+# EVV=equal size + variable shape + (extreme complexity + ellipsoidal)
+# VVV=variable szie + variable shape + (extreme complexity + ellipsoidal)
+
+
+# use 
+# c("EII", "VII", "EEI", "VVI", "EEE", "VVV") very short with ok-ish results not great
+# c("EII", "VII", "EEI", "VVI", "VEE", "VVV", "VVE") better results but takes long
+model_selection <- Mclust(X_1_reduced, G = 2:6, 
+                          modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+
+model_selection_2 <- Mclust(X_2_reduced, G = 2:6, 
+                          modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+
+# this option is a good all rounder with variable/equal sizes + variable/equal shapes + ellipsoid/diag/sphereical 
+
+
+model_selection_5 <- Mclust(X_5_reduced, G=2:6, 
+                            modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_10 <- Mclust(X_10_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "VEE", "VVV","VVE"))
+model_selection_20 <- Mclust(X_20_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_25 <- Mclust(X_25_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "VEE", "VVV","VVE"))
+
+model_selection_3 <- Mclust(X_3_reduced, G=2:6, 
+                            modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_4 <- Mclust(X_4_reduced, G=2:6, 
+                            modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_6 <- Mclust(X_6_reduced, G=2:6, 
+                            modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_7 <- Mclust(X_7_reduced, G=2:6, 
+                            modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_8 <- Mclust(X_8_reduced, G=2:6, 
+                            modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_9 <- Mclust(X_9_reduced, G=2:6, 
+                            modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+
+model_selection_11 <- Mclust(X_11_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_12 <- Mclust(X_12_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_13 <- Mclust(X_13_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_14 <- Mclust(X_14_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_15 <- Mclust(X_15_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_16 <- Mclust(X_16_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+
+model_selection_17 <- Mclust(X_17_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_18 <- Mclust(X_18_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_19 <- Mclust(X_19_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_21 <- Mclust(X_21_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_22 <- Mclust(X_22_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+model_selection_23 <- Mclust(X_23_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+
+model_selection_24 <- Mclust(X_24_reduced, G=2:6, 
+                             modelNames = c("EII", "VII", "EEI", "VVI", "EEE", "VVV","VVE"))
+
+mclust_models_list <- list(
+  "Imputation_1"  = model_selection,
+  "Imputation_2"  = model_selection_2,
+  "Imputation_3"  = model_selection_3,
+  "Imputation_4"  = model_selection_4,
+  "Imputation_5"  = model_selection_5,
+  "Imputation_6"  = model_selection_6,
+  "Imputation_7"  = model_selection_7,
+  "Imputation_8"  = model_selection_8,
+  "Imputation_9"  = model_selection_9,
+  "Imputation_10" = model_selection_10,
+  "Imputation_11" = model_selection_11,
+  "Imputation_12" = model_selection_12,
+  "Imputation_13" = model_selection_13,
+  "Imputation_14" = model_selection_14,
+  "Imputation_15" = model_selection_15,
+  "Imputation_16" = model_selection_16,
+  "Imputation_17" = model_selection_17,
+  "Imputation_18" = model_selection_18,
+  "Imputation_19" = model_selection_19,
+  "Imputation_20" = model_selection_20,
+  "Imputation_21" = model_selection_21,
+  "Imputation_22" = model_selection_22,
+  "Imputation_23" = model_selection_23,
+  "Imputation_24" = model_selection_24,
+  "Imputation_25" = model_selection_25
+)
+
+
+# Shows that using majority vote that VVE + K=4 clusters is the best
+# VVI is second so if really want could use that
+# VVI however does tend to say biggest possible k is the best wich is not good
+best_choices <- data.frame(
+  Dataset    = names(mclust_models_list),
+  Best_Model = sapply(mclust_models_list, function(x) x$modelName),
+  Best_G     = sapply(mclust_models_list, function(x) x$G),
+  Best_BIC = sapply(mclust_models_list, function(x) x$BIC[1]),
+  stringsAsFactors = FALSE
+)
+
+```
+
+## Using majority vote we decide on model=VVE
+#                                        Variable shape of clusters
+#                                        variable size of clusters
+#                                        equal orientation
+#                                        (Ellipsoidal)
+#                                       num clusters = 4
+
+# we now fit the final models using mclust to determine final clusters of the data
+# (again this also takes +-15 minutes each to run )
+```{r}
+
+model_selection_final <- Mclust(X_1_reduced,G=4,modelNames = "VVE")
+model_selection_2_final <- Mclust(X_2_reduced,G=4,modelNames = "VVE")
+model_selection_5_final <- Mclust(X_5_reduced,G=4,modelNames = "VVE")
+model_selection_10_final <- Mclust(X_10_reduced,G=4,modelNames = "VVE")#lank
+model_selection_20_final <- Mclust(X_20_reduced,G=4,modelNames = "VVE")
+model_selection_25_final <- Mclust(X_25_reduced,G=4, modelNames = "VVE")
+
+
+model_selection_3_final <- Mclust(X_3_reduced,G=4,modelNames = "VVE")
+model_selection_4_final <- Mclust(X_4_reduced,G=4,modelNames = "VVE")
+model_selection_6_final <- Mclust(X_6_reduced,G=4,modelNames = "VVE")
+model_selection_7_final <- Mclust(X_7_reduced,G=4,modelNames = "VVE")
+model_selection_8_final <- Mclust(X_8_reduced,G=4,modelNames = "VVE")
+model_selection_9_final <- Mclust(X_9_reduced,G=4, modelNames = "VVE")
+
+model_selection_11_final <- Mclust(X_11_reduced,G=4,modelNames = "VVE")
+model_selection_12_final <- Mclust(X_12_reduced,G=4,modelNames = "VVE")
+model_selection_13_final <- Mclust(X_13_reduced,G=4,modelNames = "VVE")
+model_selection_14_final <- Mclust(X_14_reduced,G=4,modelNames = "VVE")
+model_selection_15_final <- Mclust(X_15_reduced,G=4,modelNames = "VVE")
+model_selection_16_final <- Mclust(X_16_reduced,G=4, modelNames = "VVE")
+
+model_selection_17_final <- Mclust(X_17_reduced,G=4,modelNames = "VVE")
+model_selection_18_final <- Mclust(X_18_reduced,G=4,modelNames = "VVE")
+model_selection_19_final <- Mclust(X_19_reduced,G=4,modelNames = "VVE")
+model_selection_21_final <- Mclust(X_21_reduced,G=4,modelNames = "VVE")
+model_selection_22_final <- Mclust(X_22_reduced,G=4,modelNames = "VVE")
+model_selection_23_final <- Mclust(X_23_reduced,G=4, modelNames = "VVE")
+
+model_selection_24_final <- Mclust(X_24_reduced,G=4,modelNames = "VVE")
+
+
+# Get the assigned cluster for each row in your data
+client_clusters <- model_selection_final$classification
+client_clusters_2 <- model_selection_2_final$classification
+client_clusters_5 <- model_selection_5_final$classification
+client_clusters_10 <- model_selection_10_final$classification
+client_clusters_20 <- model_selection_20_final$classification
+client_clusters_25 <- model_selection_25_final$classification
+
+client_clusters_3 <- model_selection_3_final$classification
+client_clusters_4 <- model_selection_4_final$classification
+client_clusters_6 <- model_selection_6_final$classification
+client_clusters_7 <- model_selection_7_final$classification
+client_clusters_8 <- model_selection_8_final$classification
+client_clusters_9 <- model_selection_9_final$classification
+
+client_clusters_11 <- model_selection_11_final$classification
+client_clusters_12 <- model_selection_12_final$classification
+client_clusters_13 <- model_selection_13_final$classification
+client_clusters_14 <- model_selection_14_final$classification
+client_clusters_15 <- model_selection_15_final$classification
+client_clusters_16 <- model_selection_16_final$classification
+
+client_clusters_17 <- model_selection_17_final$classification
+client_clusters_18 <- model_selection_18_final$classification
+client_clusters_19 <- model_selection_19_final$classification
+client_clusters_21 <- model_selection_21_final$classification
+client_clusters_22 <- model_selection_22_final$classification
+client_clusters_23 <- model_selection_23_final$classification
+
+client_clusters_24 <- model_selection_24_final$classification
+
+
+# shows in which cluster each observation belongs + the prob
+# ie this just creates a new dataset with all info we need for every row for every dataset
+df_final <- cbind(X_1_reduced, Cluster = client_clusters)
+df_final_2 <- cbind(X_2_reduced, Cluster = client_clusters_2)
+df_final_5 <- cbind(X_5_reduced, Cluster = client_clusters_5)
+df_final_10 <- cbind(X_10_reduced, Cluster = client_clusters_10)
+df_final_20 <- cbind(X_20_reduced, Cluster = client_clusters_20)
+df_final_25 <- cbind(X_25_reduced, Cluster = client_clusters_25)
+
+df_final_3 <- cbind(X_3_reduced, Cluster = client_clusters_3)
+df_final_4 <- cbind(X_4_reduced, Cluster = client_clusters_4)
+df_final_6 <- cbind(X_6_reduced, Cluster = client_clusters_6)
+df_final_7 <- cbind(X_7_reduced, Cluster = client_clusters_7)
+df_final_8 <- cbind(X_8_reduced, Cluster = client_clusters_8)
+df_final_9 <- cbind(X_9_reduced, Cluster = client_clusters_9)
+
+df_final_11 <- cbind(X_11_reduced, Cluster = client_clusters_11)
+df_final_12 <- cbind(X_12_reduced, Cluster = client_clusters_12)
+df_final_13 <- cbind(X_13_reduced, Cluster = client_clusters_13)
+df_final_14 <- cbind(X_14_reduced, Cluster = client_clusters_14)
+df_final_15 <- cbind(X_15_reduced, Cluster = client_clusters_15)
+df_final_16 <- cbind(X_16_reduced, Cluster = client_clusters_16)
+
+df_final_17 <- cbind(X_17_reduced, Cluster = client_clusters_17)
+df_final_18 <- cbind(X_18_reduced, Cluster = client_clusters_18)
+df_final_19 <- cbind(X_19_reduced, Cluster = client_clusters_19)
+df_final_21 <- cbind(X_21_reduced, Cluster = client_clusters_21)
+df_final_22 <- cbind(X_22_reduced, Cluster = client_clusters_22)
+df_final_23 <- cbind(X_23_reduced, Cluster = client_clusters_23)
+
+df_final_24 <- cbind(X_24_reduced, Cluster = client_clusters_24)
+
+
+#  this is each row of each datasets probability of belonging to each cluster
+probs <- model_selection_final$z 
+probs_5 <- model_selection_5_final$z 
+probs_25 <- model_selection_25_final$z 
+
+probs_2 <- model_selection_2_final$z 
+probs_3 <- model_selection_3_final$z 
+probs_4 <- model_selection_4_final$z 
+
+probs_6 <- model_selection_6_final$z 
+probs_7 <- model_selection_7_final$z 
+probs_8 <- model_selection_8_final$z 
+
+probs_9 <- model_selection_9_final$z 
+probs_10 <- model_selection_10_final$z 
+probs_11 <- model_selection_11_final$z 
+
+probs_12 <- model_selection_12_final$z 
+probs_13 <- model_selection_13_final$z 
+probs_14 <- model_selection_14_final$z 
+
+probs_15 <- model_selection_15_final$z 
+probs_16 <- model_selection_16_final$z 
+probs_17 <- model_selection_17_final$z 
+
+probs_18 <- model_selection_18_final$z 
+probs_19 <- model_selection_19_final$z 
+probs_20 <- model_selection_20_final$z 
+
+probs_21 <- model_selection_21_final$z 
+probs_22 <- model_selection_22_final$z 
+probs_23 <- model_selection_23_final$z 
+
+probs_24 <- model_selection_24_final$z
+
+```
+
+ ###### label matching. #######
+# to ensure every row across datsets are matched 
+# since cluster 1 in dataset 1 does not necessarily mean the same as cluster 1 in dataste 20
+
+# this code checks how similar each cluster accross each dataset is
+# so that we can firstly see what clusters are actually the same accross different dataset (like c1 in d1 can be the same as c3 in d10)
+# it does this compared to dataset 1 (can be any) as the reference dataset 
+# so every cluster in dataset 2-25 is renamed to match clusters in dataset 1
+
+
+# it checks how similar each cluster over each dataset is
+# clusters with similar observations should be the same cluster 
+# since similar obs should be in similar clusters
+# if clusters tend to have the same type of observations in it just renames it in datasets 2-25 to match that of reference dataset
+# (whole thing is called Hungarian algorithm)
+# we then use Rubins Rule to poole the results based on the probabilities
+# this is in that pdf file about the missingness i sent 
+
+```{r}
+library(clue)  # for Hungarian algorithm (solve_LSAP)
+
+#Collect all classification vectors into a list
+all_models <- list(
+  model_selection_final,    model_selection_2_final,  model_selection_3_final,
+  model_selection_4_final,  model_selection_5_final,  model_selection_6_final,
+  model_selection_7_final,  model_selection_8_final,  model_selection_9_final,
+  model_selection_10_final, model_selection_11_final, model_selection_12_final,
+  model_selection_13_final, model_selection_14_final, model_selection_15_final,
+  model_selection_16_final, model_selection_17_final, model_selection_18_final,
+  model_selection_19_final, model_selection_20_final, model_selection_21_final,
+  model_selection_22_final, model_selection_23_final, model_selection_24_final,
+  model_selection_25_final
+)
+
+# Extract posterior probability matrices (n x G)
+all_probs <- lapply(all_models, function(m) m$z)  # m$z is the n x 4 posterior matrix
+
+# Align labels of each dataset to Dataset 1 (reference) using Hungarian algorithm
+# For each imputation, find the permutation of clusters that best matches
+# the reference posterior matrix, then reorder columns accordingly.
+
+reference_probs <- all_probs[[1]]  # Dataset 1 is the reference
+
+align_labels <- function(ref_probs, target_probs) {
+  G <- ncol(ref_probs)
+  # Build a cost matrix: how dissimilar is ref cluster g to target cluster k
+  # Use sum of squared differences in posterior probabilities
+  cost_matrix <- matrix(0, G, G)
+  for (g in 1:G) {
+    for (k in 1:G) {
+      cost_matrix[g, k] <- sum((ref_probs[, g] - target_probs[, k])^2)
+    }
+  }
+  # Hungarian algorithm finds the best column permutation
+  perm <- as.integer(solve_LSAP(cost_matrix))
+  # Return reordered posterior matrix
+  return(target_probs[, perm])
+}
+
+aligned_probs <- vector("list", length(all_probs))
+aligned_probs[[1]] <- reference_probs  # reference stays same here 
+
+for (i in 2:length(all_probs)) {
+  aligned_probs[[i]] <- align_labels(reference_probs, all_probs[[i]])
+}
+
+# hier is Rubin's Rule: average the aligned posterior probabilities
+# Die is the "across imputation" pooling step
+pooled_probs <- Reduce("+", aligned_probs) / length(aligned_probs)
+
+#Assign final cluster = highest pooled posterior probability
+final_clusters <- apply(pooled_probs, 1, which.max)
+
+
+# X_1$final_cluster <- as.factor(final_clusters)
+
+# data with missing values and clusters
+# just to show with the missing data that we still cluster into cluster x
+# should not have a value here as there is not a real value to enter here 
+# we have a range/distribuition of values that could possibly be the real values
+All_data_to_show <- data_final
+All_data_to_show$final_cluster <- as.factor(final_clusters)
+All_data_to_show$prob_in_cluster <- pooled_probs[cbind(1:nrow(pooled_probs), final_clusters)]
+
+All_data_to_show$prob_cluster_1 <- pooled_probs[, 1]
+All_data_to_show$prob_cluster_2 <- pooled_probs[, 2]
+All_data_to_show$prob_cluster_3 <- pooled_probs[, 3]
+All_data_to_show$prob_cluster_4 <- pooled_probs[, 4]
+
+```
+
+# This helps decide how we differentiate between clusters
+# my thinking is just that we know its bank data
+# but we dont truly know what type of bank data it is for
+# it is probably be credit risk so high/medium/low risk
+# but
+# it may be customer profitability
+# attrition and churn prediction (if the customer will leave the bank)
+# model the type of customer (is it like an up and coming business, old person looking to retire, young person that might want a house loan)
+# so i was thinking we rather cluster based on attributes of the data than an outcome we think they might be looking for
+# Since we dont with 100% certainty know what we are truly clustering
+# Atleast that is my thinking
+```{r}
+
+
+# Extract individual coordinates (scores) from each FAMD result
+all_coords <- list(
+  res_famd$ind$coord,    res_famd_2$ind$coord,  res_famd_3$ind$coord,
+  res_famd_4$ind$coord,  res_famd_5$ind$coord,  res_famd_6$ind$coord,
+  res_famd_7$ind$coord,  res_famd_8$ind$coord,  res_famd_9$ind$coord,
+  res_famd_10$ind$coord, res_famd_11$ind$coord, res_famd_12$ind$coord,
+  res_famd_13$ind$coord, res_famd_14$ind$coord, res_famd_15$ind$coord,
+  res_famd_16$ind$coord, res_famd_17$ind$coord, res_famd_18$ind$coord,
+  res_famd_19$ind$coord, res_famd_20$ind$coord, res_famd_21$ind$coord,
+  res_famd_22$ind$coord, res_famd_23$ind$coord, res_famd_24$ind$coord,
+  res_famd_25$ind$coord
+)
+
+# Pool by averaging coordinates across imputations
+# Same person, same row index, so averaging is valid
+pooled_coords <- Reduce("+", all_coords) / length(all_coords)
+
+# Attach cluster labels
+pooled_coords_df <- as.data.frame(pooled_coords)
+pooled_coords_df$final_cluster <- as.factor(final_clusters)
+
+
+library(ggplot2)
+
+# Dim 1 vs Dim 2
+ggplot(pooled_coords_df, aes(x = Dim.1, y = Dim.2, color = final_cluster)) +
+  geom_point(alpha = 0.5) +
+  stat_ellipse() +  # draws a confidence ellipse per cluster
+  labs(title = "Cluster Separation on Pooled FAMD Dimensions 1 & 2",
+       color = "Cluster") +
+  theme_minimal()
+
+# Dim 1 vs Dim 3
+ggplot(pooled_coords_df, aes(x = Dim.1, y = Dim.3, color = final_cluster)) +
+  geom_point(alpha = 0.5) +
+  stat_ellipse() +
+  labs(title = "Cluster Separation on Pooled FAMD Dimensions 1 & 3",
+       color = "Cluster") +
+  theme_minimal()
+
+ggplot(pooled_coords_df, aes(x = Dim.1, y = Dim.4, color = final_cluster)) +
+  geom_point(alpha = 0.5) +
+  stat_ellipse() +
+  labs(title = "Cluster Separation on Pooled FAMD Dimensions 1 & 4",
+       color = "Cluster") +
+  theme_minimal()
+
+ggplot(pooled_coords_df, aes(x = Dim.2, y = Dim.3, color = final_cluster)) +
+  geom_point(alpha = 0.5) +
+  stat_ellipse() +
+  labs(title = "Cluster Separation on Pooled FAMD Dimensions 2 & 3",
+       color = "Cluster") +
+  theme_minimal()
+
+ggplot(pooled_coords_df, aes(x = Dim.2, y = Dim.4, color = final_cluster)) +
+  geom_point(alpha = 0.5) +
+  stat_ellipse() +
+  labs(title = "Cluster Separation on Pooled FAMD Dimensions 2 & 4",
+       color = "Cluster") +
+  theme_minimal()
+
+ggplot(pooled_coords_df, aes(x = Dim.3, y = Dim.4, color = final_cluster)) +
+  geom_point(alpha = 0.5) +
+  stat_ellipse() +
+  labs(title = "Cluster Separation on Pooled FAMD Dimensions 3 & 4",
+       color = "Cluster") +
+  theme_minimal()
+
+
+
+
+# Extract contributions from each imputation
+all_contribs <- list(
+  res_famd$var$contrib,    res_famd_2$var$contrib,  res_famd_3$var$contrib,
+  res_famd_4$var$contrib,  res_famd_5$var$contrib,  res_famd_6$var$contrib,
+  res_famd_7$var$contrib,  res_famd_8$var$contrib,  res_famd_9$var$contrib,
+  res_famd_10$var$contrib, res_famd_11$var$contrib, res_famd_12$var$contrib,
+  res_famd_13$var$contrib, res_famd_14$var$contrib, res_famd_15$var$contrib,
+  res_famd_16$var$contrib, res_famd_17$var$contrib, res_famd_18$var$contrib,
+  res_famd_19$var$contrib, res_famd_20$var$contrib, res_famd_21$var$contrib,
+  res_famd_22$var$contrib, res_famd_23$var$contrib, res_famd_24$var$contrib,
+  res_famd_25$var$contrib
+)
+
+# Average contributions across imputations
+pooled_contribs <- Reduce("+", all_contribs) / length(all_contribs)
+
+# Total contribution across first 5 dims (pooled)
+# this shows the 15 most important variables in the model
+# higher number = variable explains more structure across all 5 dimensions of the FAMD
+# from this pick like the top 4 variables
+# this helps us decide how to name the clusters
+pooled_total_contribs <- rowSums(pooled_contribs[, 1:5])
+sort(pooled_total_contribs, decreasing = TRUE) |> head(15)
+
+
+
+
+library(dplyr)
+
+# Stack all 25 datasets with cluster labels attached
+all_datasets <- list(
+  X_1, X_2, X_3, X_4, X_5, X_6, X_7, X_8, X_9,
+  X_10, X_11, X_12, X_13, X_14, X_15, X_16, X_17,
+  X_18, X_19, X_20, X_21, X_22, X_23, X_24, X_25
+)
+
+# Attach cluster label to each dataset
+all_datasets_labeled <- lapply(all_datasets, function(df) {
+  df$final_cluster <- as.factor(final_clusters)
+  df
+})
+
+# Stack all into one long dataframe
+stacked_data <- bind_rows(all_datasets_labeled)
+
+# Now summarise — averaging over all 25 imputations naturally
+numeric_vars <- names(X_1)[sapply(X_1, is.numeric)]
+categorical_vars <- names(X_1)[sapply(X_1, is.factor)]
+
+# Pooled numeric means per cluster
+# look at this accross rows. 
+# so check the pattern that is here
+# focus on the say 4 most important numerical variables as found in pooled_total_contribs
+numeric_profile <- stacked_data %>%
+  group_by(final_cluster) %>%
+  summarise(across(all_of(numeric_vars), mean, na.rm = TRUE))
+
+print(numeric_profile)
+
+# Pooled categorical proportions per cluster
+# this shows a number that tells us for each level of each categorical variable
+# is in what cluster
+for (var in categorical_vars) {
+  cat("\n---", var, "---\n")
+  tbl <- stacked_data %>%
+    group_by(final_cluster, .data[[var]]) %>%
+    summarise(n = n(), .groups = "drop") %>%
+    group_by(final_cluster) %>%
+    mutate(prop = n / sum(n))
+  print(tbl)
+}
+
+```
+
